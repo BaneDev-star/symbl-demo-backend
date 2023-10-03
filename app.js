@@ -1,113 +1,101 @@
 const { sdk } = require('@symblai/symbl-js');
+const express = require('express')
+const bodyParser = require('body-parser')
+const path = require('path')
+const app = express()
+app.use(bodyParser.urlencoded({ extended: true }))
+app.use(bodyParser.json())
+const multer = require('multer')
+const storage = multer.memoryStorage()
+const upload = multer({ storage: storage })
 const uuid = require('uuid').v4;
+const fs = require('fs')
+
+app.use(express.static(path.resolve(__dirname, '..', '/build')))
 require('dotenv').config();
 
-const mic = require('mic')
-const sampleRateHertz = 16000
-
-// START changing values here.
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*')
+  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+  res.header('Access-Control-Allow-Headers', '*')
+  if (req.method === 'OPTIONS') {
+    res.status(200).end()
+  } else {
+    next()
+  }
+})
 
 const appId = process.env.SYMBL_APP_ID;
 const appSecret = process.env.SYMBL_APP_SECRET;
-
+const sampleRateHertz = 16000
 const config = {
-  meetingTitle: '<TITLE>',
-  sampleRateHertz: sampleRateHertz
-}
-
-const speaker = {
-  name: '<NAME>',
-  userId: '<EMAIL>'
+  meetingTitle: 'My Test Meeting',
+  confidenceThreshold: 0.7,
+  timezoneOffset: 480, // Offset in minutes from UTC
+  languageCode: 'en-US',
+  sampleRateHertz 
 }
 
 // STOP changing values here.
 
 const insightTypes = [
   'question',
-  'action_item',
-  'follow_up',
-  'topic'
+  'action_item'
 ]
 
-const micInstance = mic({
-  rate: sampleRateHertz,
-  channels: '1',
-  debug: false,
-  exitOnSilence: 6,
-});
+var connection = null;
+// sdk.init({
+//   appId: appId,
+//   appSecret: appSecret,
+//   basePath: 'https://api.symbl.ai',
+// }).then(async () => {
+//   const connectionId = uuid()
 
-// Need unique ID and best to use uuid in production
-// const connectionId = uuid()
-const connectionId = Buffer.from(appId).toString('base64'); // for testing
+//   // Start Real-time Request (Uses Real-time WebSocket API behind the scenes)
+//   connection = await sdk.startRealtimeRequest({
+//     id: connectionId,
+//     insightTypes: insightTypes,
+//     config: config,
+//     handlers: {
+//       /**
+//        * This will return live speech-to-text transcription of the call.
+//        * There are other handlers that can be seen in the full example.
+//        */
+//       onSpeechDetected: (data) => {
+//         if (data) {
+//           const {
+//             punctuated
+//           } = data
+//           console.log('Live: ', punctuated && punctuated.transcript)
+//         }
+//       }
+//     }
+//   });
+//   // Logs conversationId which is used to access the conversation afterwards
+//   console.log('Successfully connected. Conversation ID2: ', connection.conversationId);
+// }).catch(e => {
+//   console.error('error = ', e.message);
+// })
 
-(async () => {
-  try {
-    // Initialize the SDK
-    await sdk.init({
-      appId: appId,
-      appSecret: appSecret,
-      basePath: 'https://api.symbl.ai',
-    })
 
-    // Start Real-time Request (Uses Real-time WebSocket API behind the scenes)
-    const connection = await sdk.startRealtimeRequest({
-      id: connectionId,
-      speaker: speaker,
-      insightTypes: insightTypes,
-      config: config,
-      handlers: {
-        /**
-         * This will return live speech-to-text transcription of the call.
-         * There are other handlers that can be seen in the full example.
-         */
-        onSpeechDetected: (data) => {
-          if (data) {
-            const {
-              punctuated
-            } = data
-            console.log('Live: ', punctuated && punctuated.transcript)
-          }
+app.get('/speech', async (req, res) => {
+  fs.readFile(path.resolve(__dirname, 'harvard.wav'), (err, blob) => {
+    const buffer = blob;
+    const size = buffer.toString().length
+    for (let i = 0; i < buffer.toString().length; i += 8192) {
+      setTimeout(() => {
+        const subBuff = buffer.subarray(i, i + 8192 > size ? size : i + 8192)
+        
+        if (connection) {
+          console.log('subBuff = ', subBuff.toString().length)
+          connection.sendAudio(subBuff)
         }
-      }
-    });
-
-    // Logs conversationId which is used to access the conversation afterwards
-    console.log('Successfully connected. Conversation ID: ', connection.conversationId);
-
-    const micInputStream = micInstance.getAudioStream()
-    /** Raw audio stream */
-    micInputStream.on('data', (data) => {
-      // Push audio from Microphone to websocket connection
-      connection.sendAudio(data)
+      }, [100])
+    }
+    res.json({
+      success: true
     })
+  })
+})
 
-    micInputStream.on('error', function (err) {
-      console.log('Error in Input Stream: ' + err)
-    })
-
-    micInputStream.on('startComplete', function () {
-      console.log('Started listening to Microphone.')
-    })
-
-    micInputStream.on('silence', function () {
-      console.log('Got SIGNAL silence')
-    })
-
-    micInstance.start()
-
-    setTimeout(async () => {
-      // Stop listening to microphone
-      micInstance.stop()
-      console.log('Stopped listening to Microphone.')
-      try {
-        // Stop connection
-        await connection.stop()
-        console.log('Connection Stopped.')
-      } catch (e) {
-        console.error('Error while stopping the connection.', e)
-      }
-    }, 120 * 1000) // Stop connection after 2 minute i.e. 120 secs
-  } catch (err) {
-    console.error('Error: ', err)
-  }
-})();
+module.exports = app
